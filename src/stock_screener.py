@@ -93,12 +93,18 @@ EXTRACT_STOCKS_PROMPT = """你是一个专业的 A 股分析师。请从以下�
 
 # 搜索财经新闻的查询词
 NEWS_QUERIES = [
+    # 传统财经新闻
     "A股 利好 今日",
     "A股 重大合同 公告",
     "上市公司 业绩预增",
     "机构调研 热门股",
     "北向资金 买入",
     "涨停 复盘 龙头",
+    # 淘股吧/股吧讨论
+    "site:tgb.cn 龙头 涨停",
+    "site:guba.eastmoney.com 利好 主力",
+    # 雪球讨论
+    "site:xueqiu.com 重仓 看好",
 ]
 
 
@@ -260,6 +266,108 @@ class StockScreener:
         """
         signals = self.screen_from_news(top_n=top_n)
         return [s.code for s in signals]
+    
+    def screen_from_guba(self, top_n: int = 10) -> List[StockSignal]:
+        """
+        从东方财富股吧热帖中筛选股票
+        
+        备用数据源，当搜索服务不可用时使用
+        """
+        import requests
+        from bs4 import BeautifulSoup
+        
+        signals = []
+        seen_codes = set()
+        
+        try:
+            # 获取股吧热门帖子页面
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://guba.eastmoney.com/",
+            }
+            
+            urls = [
+                "https://guba.eastmoney.com/",  # 首页热帖
+                "https://guba.eastmoney.com/rank/",  # 人气榜
+            ]
+            
+            for url in urls:
+                try:
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    resp.encoding = 'utf-8'
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    
+                    # 提取帖子标题和链接
+                    for link in soup.find_all('a', href=True):
+                        href = link.get('href', '')
+                        title = link.get_text(strip=True)
+                        
+                        # 股吧帖子链接格式: /news,股票代码,xxx.html
+                        if '/news,' in href and title:
+                            parts = href.split(',')
+                            if len(parts) >= 2:
+                                code = parts[1]
+                                if self._is_valid_stock_code(code) and code not in seen_codes:
+                                    seen_codes.add(code)
+                                    signals.append(StockSignal(
+                                        code=code,
+                                        name="",  # 稍后可通过 API 获取名称
+                                        signal_type=SignalType.NEUTRAL,
+                                        reason=title[:100],
+                                        source="东财股吧",
+                                        confidence=0.5,
+                                        news_title=title,
+                                    ))
+                except Exception as e:
+                    logger.debug(f"获取 {url} 失败: {e}")
+                    continue
+            
+            logger.info(f"📊 股吧热帖发现 {len(signals)} 只股票")
+            
+        except Exception as e:
+            logger.warning(f"股吧数据获取失败: {e}")
+        
+        return signals[:top_n]
+    
+    def screen_combined(self, top_n: int = 10) -> List[StockSignal]:
+        """
+        综合选股：结合新闻 + 股吧讨论
+        
+        优先级：新闻利好 > 股吧热议 > 新闻中性
+        """
+        # 1. 从新闻获取
+        news_signals = self.screen_from_news(top_n=top_n * 2)
+        
+        # 2. 从股吧获取（备用）
+        guba_signals = []
+        try:
+            guba_signals = self.screen_from_guba(top_n=top_n)
+        except Exception as e:
+            logger.debug(f"股吧数据获取失败，跳过: {e}")
+        
+        # 3. 合并去重
+        seen_codes = set()
+        combined = []
+        
+        # 先加新闻利好
+        for s in news_signals:
+            if s.code not in seen_codes and s.signal_type == SignalType.POSITIVE:
+                combined.append(s)
+                seen_codes.add(s.code)
+        
+        # 再加股吧热议
+        for s in guba_signals:
+            if s.code not in seen_codes:
+                combined.append(s)
+                seen_codes.add(s.code)
+        
+        # 最后补充新闻中性
+        for s in news_signals:
+            if s.code not in seen_codes:
+                combined.append(s)
+                seen_codes.add(s.code)
+        
+        return combined[:top_n]
 
 
 # === 命令行测试 ===
