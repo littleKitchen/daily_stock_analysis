@@ -139,7 +139,8 @@ def parse_arguments() -> argparse.Namespace:
   python main.py --schedule         # 启用定时任务模式
   python main.py --market-review    # 仅运行大盘复盘
   python main.py --smart            # 智能选股：从新闻自动发现股票
-  python main.py --smart --smart-top 10  # 智能选股 Top 10
+  python main.py --smart-combined   # 综合选股：新闻+淘股吧+东财+雪球
+  python main.py --smart-combined --smart-top 10  # 综合选股 Top 10
         '''
     )
     
@@ -220,6 +221,12 @@ def parse_arguments() -> argparse.Namespace:
         '--smart',
         action='store_true',
         help='智能选股模式：从新闻中自动发现值得关注的股票，然后分析'
+    )
+    
+    parser.add_argument(
+        '--smart-combined',
+        action='store_true',
+        help='综合智能选股：新闻 + 淘股吧 + 东财股吧 + 雪球，大一统信息源'
     )
     
     parser.add_argument(
@@ -403,18 +410,29 @@ def main() -> int:
         logger.info(f"使用命令行指定的股票列表: {stock_codes}")
     
     # === 智能选股模式 ===
-    if args.smart:
-        logger.info(f"🔍 模式: 智能选股（Top {args.smart_top}）")
+    if args.smart or args.smart_combined:
+        mode_name = "综合智能选股" if args.smart_combined else "智能选股"
+        logger.info(f"🔍 模式: {mode_name}（Top {args.smart_top}）")
+        
+        if args.smart_combined:
+            logger.info("📡 数据源: 财经新闻 + 淘股吧 + 东财股吧 + 雪球")
+        
         try:
             from src.stock_screener import StockScreener
             screener = StockScreener(config)
-            signals = screener.screen_from_news(top_n=args.smart_top)
+            
+            # 根据模式选择方法
+            if args.smart_combined:
+                signals = screener.screen_combined(top_n=args.smart_top)
+            else:
+                signals = screener.screen_from_news(top_n=args.smart_top)
             
             if signals:
                 stock_codes = [s.code for s in signals]
-                logger.info(f"✅ 智能选股完成，发现 {len(signals)} 只股票:")
+                logger.info(f"✅ {mode_name}完成，发现 {len(signals)} 只股票:")
                 for s in signals:
-                    logger.info(f"   {s.code} {s.name} [{s.signal_type.value}] - {s.reason[:50]}...")
+                    reason_preview = s.reason[:50] + "..." if len(s.reason) > 50 else s.reason
+                    logger.info(f"   {s.code} {s.name} [{s.signal_type.value}] [{s.source}] - {reason_preview}")
             else:
                 logger.warning("⚠️ 智能选股未发现值得关注的股票，将使用配置文件中的股票列表")
         except Exception as e:
