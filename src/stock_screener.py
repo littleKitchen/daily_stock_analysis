@@ -149,14 +149,21 @@ class StockScreener:
     def _generate_content(self, prompt: str) -> Optional[str]:
         """调用 LLM 生成内容"""
         try:
+            # 检查 analyzer 是否可用
+            if not self.analyzer.is_available():
+                logger.warning("AI 分析器不可用")
+                return None
+            
             # 使用 analyzer 的内部方法调用 API
             generation_config = {
                 "temperature": 0.7,
                 "max_output_tokens": 2048,
             }
-            return self.analyzer._call_api_with_retry(prompt, generation_config)
+            result = self.analyzer._call_api_with_retry(prompt, generation_config)
+            logger.debug(f"LLM 响应长度: {len(result) if result else 0}")
+            return result
         except Exception as e:
-            logger.warning(f"LLM 调用失败: {e}")
+            logger.warning(f"LLM 调用失败: {type(e).__name__}: {e}")
             return None
     
     def screen_from_news(self, top_n: int = 10, queries: List[str] = None) -> List[StockSignal]:
@@ -205,20 +212,30 @@ class StockScreener:
         response = None
         for provider in self.search_service._providers:
             if provider.is_available:
-                response = provider.search(query, max_results=5, days=3)
-                if response.success and response.results:
-                    break
+                try:
+                    response = provider.search(query, max_results=5, days=3)
+                    if response.success and response.results:
+                        break
+                except Exception as e:
+                    logger.debug(f"Provider {provider.__class__.__name__} 搜索失败: {e}")
+                    continue
         
         if not response or not response.success or not response.results:
+            logger.debug(f"搜索 '{query}' 无结果")
             return []
+        
+        logger.debug(f"搜索 '{query}' 获得 {len(response.results)} 条结果")
         
         # 2. 组装新闻内容
         news_content = self._format_news_for_llm(response.results)
         
         # 3. 调用 LLM 提取
-        signals = self._extract_stocks_from_news(news_content, response.results)
-        
-        return signals
+        try:
+            signals = self._extract_stocks_from_news(news_content, response.results)
+            return signals
+        except Exception as e:
+            logger.warning(f"LLM 提取股票失败 for '{query}': {type(e).__name__}: {e}")
+            return []
     
     def _format_news_for_llm(self, results) -> str:
         """格式化新闻供 LLM 分析"""
@@ -236,14 +253,28 @@ class StockScreener:
         try:
             response = self._generate_content(prompt)
             if not response:
+                logger.debug("LLM 返回空响应")
                 return []
             
-            # 提取 JSON
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if not json_match:
-                return []
+            # 提取 JSON - 尝试找到包含 "stocks" 的 JSON 对象
+            # 先尝试找 ```json ... ``` 代码块
+            code_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response)
+            if code_block_match:
+                json_str = code_block_match.group(1)
+            else:
+                # 否则找最外层的 { }
+                json_match = re.search(r'\{[^{}]*"stocks"[^{}]*\[[\s\S]*?\]\s*\}', response)
+                if json_match:
+                    json_str = json_match.group()
+                else:
+                    # 最后尝试任何 JSON 对象
+                    json_match = re.search(r'\{[\s\S]*\}', response)
+                    if not json_match:
+                        logger.debug(f"无法从 LLM 响应中提取 JSON: {response[:200]}...")
+                        return []
+                    json_str = json_match.group()
             
-            data = json.loads(json_match.group())
+            data = json.loads(json_str)
             stocks_data = data.get("stocks", [])
             
             signals = []
