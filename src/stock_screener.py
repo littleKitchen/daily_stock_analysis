@@ -188,9 +188,15 @@ class StockScreener:
     
     def _search_and_extract(self, query: str) -> List[StockSignal]:
         """搜索新闻并提取股票"""
-        # 1. 搜索新闻
-        response = self.search_service.search(query, max_results=5)
-        if not response.success or not response.results:
+        # 1. 搜索新闻（使用第一个可用的 provider）
+        response = None
+        for provider in self.search_service._providers:
+            if provider.is_available:
+                response = provider.search(query, max_results=5, days=3)
+                if response.success and response.results:
+                    break
+        
+        if not response or not response.success or not response.results:
             return []
         
         # 2. 组装新闻内容
