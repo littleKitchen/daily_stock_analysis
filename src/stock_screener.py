@@ -146,6 +146,19 @@ class StockScreener:
             self._analyzer = GeminiAnalyzer(api_key=api_key)
         return self._analyzer
     
+    def _generate_content(self, prompt: str) -> Optional[str]:
+        """调用 LLM 生成内容"""
+        try:
+            # 使用 analyzer 的内部方法调用 API
+            generation_config = {
+                "temperature": 0.7,
+                "max_output_tokens": 2048,
+            }
+            return self.analyzer._call_api_with_retry(prompt, generation_config)
+        except Exception as e:
+            logger.warning(f"LLM 调用失败: {e}")
+            return None
+    
     def screen_from_news(self, top_n: int = 10, queries: List[str] = None) -> List[StockSignal]:
         """
         从新闻中筛选股票
@@ -221,7 +234,7 @@ class StockScreener:
         prompt = EXTRACT_STOCKS_PROMPT.format(news_content=news_content)
         
         try:
-            response = self.analyzer.generate_content(prompt)
+            response = self._generate_content(prompt)
             if not response:
                 return []
             
