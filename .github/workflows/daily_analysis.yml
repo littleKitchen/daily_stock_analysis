@@ -14,9 +14,16 @@ on:
         default: 'full'
         type: choice
         options:
-          - full          # 完整分析（股票+大盘）
-          - market-only   # 仅大盘复盘
-          - stocks-only   # 仅股票分析
+          - full              # 完整分析（股票+大盘）
+          - market-only       # 仅大盘复盘
+          - stocks-only       # 仅股票分析
+          - smart             # 智能选股（从新闻发现股票）
+          - smart-combined    # 综合智能选股（新闻+淘股吧+东财+雪球）
+      smart_top:
+        description: '智能选股数量（仅 smart/smart-combined 模式）'
+        required: false
+        default: '5'
+        type: string
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
@@ -184,10 +191,19 @@ jobs:
           echo ""
           
           # 执行分析
+          SMART_TOP="${{ github.event.inputs.smart_top || '5' }}"
+          
           if [ "$MODE" = "market-only" ]; then
             python main.py --market-review
           elif [ "$MODE" = "stocks-only" ]; then
             python main.py --no-market-review
+          elif [ "$MODE" = "smart" ]; then
+            echo "🔍 智能选股模式 (Top $SMART_TOP)"
+            python main.py --smart --smart-top "$SMART_TOP"
+          elif [ "$MODE" = "smart-combined" ]; then
+            echo "🔍 综合智能选股模式 (Top $SMART_TOP)"
+            echo "📡 数据源: 财经新闻 + 淘股吧 + 东财股吧 + 雪球"
+            python main.py --smart-combined --smart-top "$SMART_TOP"
           else
             python main.py
           fi
