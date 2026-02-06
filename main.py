@@ -138,6 +138,8 @@ def parse_arguments() -> argparse.Namespace:
   python main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
   python main.py --schedule         # 启用定时任务模式
   python main.py --market-review    # 仅运行大盘复盘
+  python main.py --smart            # 智能选股：从新闻自动发现股票
+  python main.py --smart --smart-top 10  # 智能选股 Top 10
         '''
     )
     
@@ -212,6 +214,19 @@ def parse_arguments() -> argparse.Namespace:
         '--no-context-snapshot',
         action='store_true',
         help='不保存分析上下文快照'
+    )
+    
+    parser.add_argument(
+        '--smart',
+        action='store_true',
+        help='智能选股模式：从新闻中自动发现值得关注的股票，然后分析'
+    )
+    
+    parser.add_argument(
+        '--smart-top',
+        type=int,
+        default=5,
+        help='智能选股模式返回的股票数量（默认 5）'
     )
     
     return parser.parse_args()
@@ -386,6 +401,25 @@ def main() -> int:
     if args.stocks:
         stock_codes = [code.strip() for code in args.stocks.split(',') if code.strip()]
         logger.info(f"使用命令行指定的股票列表: {stock_codes}")
+    
+    # === 智能选股模式 ===
+    if args.smart:
+        logger.info(f"🔍 模式: 智能选股（Top {args.smart_top}）")
+        try:
+            from src.stock_screener import StockScreener
+            screener = StockScreener(config)
+            signals = screener.screen_from_news(top_n=args.smart_top)
+            
+            if signals:
+                stock_codes = [s.code for s in signals]
+                logger.info(f"✅ 智能选股完成，发现 {len(signals)} 只股票:")
+                for s in signals:
+                    logger.info(f"   {s.code} {s.name} [{s.signal_type.value}] - {s.reason[:50]}...")
+            else:
+                logger.warning("⚠️ 智能选股未发现值得关注的股票，将使用配置文件中的股票列表")
+        except Exception as e:
+            logger.error(f"❌ 智能选股失败: {e}")
+            logger.info("将使用配置文件中的股票列表")
     
     # === 启动 WebUI (如果启用) ===
     # 优先级: 命令行参数 > 配置文件
