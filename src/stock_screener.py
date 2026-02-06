@@ -129,7 +129,12 @@ class StockScreener:
         """懒加载搜索服务"""
         if self._search_service is None:
             from src.search_service import SearchService
-            self._search_service = SearchService(self.config)
+            self._search_service = SearchService(
+                bocha_keys=getattr(self.config, 'bocha_api_keys', None),
+                tavily_keys=getattr(self.config, 'tavily_api_keys', None),
+                brave_keys=getattr(self.config, 'brave_api_keys', None),
+                serpapi_keys=getattr(self.config, 'serpapi_keys', None),
+            )
         return self._search_service
     
     @property
@@ -137,7 +142,8 @@ class StockScreener:
         """懒加载 AI 分析器"""
         if self._analyzer is None:
             from src.analyzer import GeminiAnalyzer
-            self._analyzer = GeminiAnalyzer(self.config)
+            api_key = getattr(self.config, 'gemini_api_key', None)
+            self._analyzer = GeminiAnalyzer(api_key=api_key)
         return self._analyzer
     
     def screen_from_news(self, top_n: int = 10, queries: List[str] = None) -> List[StockSignal]:
